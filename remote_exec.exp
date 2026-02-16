@@ -1,6 +1,18 @@
 #!/usr/bin/expect -f
 
 set timeout 20
+
+# Check for required arguments
+if {[llength $argv] < 3} {
+    puts "Usage: $argv0 <host> <user> <command>"
+    exit 1
+}
+
+set host [lindex $argv 0]
+set user [lindex $argv 1]
+set command [lindex $argv 2]
+
+# Check for SSH_PASSWORD environment variable
 if {[info exists env(SSH_PASSWORD)]} {
     set password $env(SSH_PASSWORD)
 } else {
@@ -8,48 +20,55 @@ if {[info exists env(SSH_PASSWORD)]} {
     exit 1
 }
 
-set command [lindex $argv 0]
-
-spawn ssh -o StrictHostKeyChecking=no unira5@36.88.105.236
+spawn ssh -o StrictHostKeyChecking=no $user@$host
 expect {
     "password:" { send "$password\r" }
     timeout { puts "SSH connection timed out"; exit 1 }
 }
 
-# Wait for shell prompt
+# Wait for shell prompt (handling normal user and already-root scenarios)
 expect {
-    "unira5@" { send "su -\r" }
-    "$ " { send "su -\r" }
+    "$ " {
+        # If we land on a normal user prompt, try to escalate to root if possible/needed
+        # For this specific task, we assume 'su -' is required as per user instructions
+        send "su -\r"
+        expect {
+            "Password:" { send "$password\r" }
+            timeout { puts "Root password prompt not found"; exit 1 }
+        }
+        expect {
+            "root@" { }
+            "# " { }
+            timeout { puts "Root prompt not found after su"; exit 1 }
+        }
+    }
+    "unira5@" {
+         # Specific handling for the known prompt format
+        send "su -\r"
+        expect "Password:"
+        send "$password\r"
+        expect "# "
+    }
+    "# " {
+        # Already root
+    }
     timeout { puts "User prompt not found"; exit 1 }
-}
-
-# Wait for su password prompt
-expect {
-    "Password:" { send "$password\r" }
-    timeout { puts "Root password prompt not found"; exit 1 }
-}
-
-# Wait for root prompt
-expect {
-    "root@" { }
-    "# " { }
-    timeout { puts "Root prompt not found"; exit 1 }
 }
 
 # Run the command
 send "$command\r"
 
-# Wait for root prompt again to indicate command finished
+# Wait for prompt again to indicate command finished
 expect {
-    "root@" { }
     "# " { }
     timeout { puts "Command execution timed out"; exit 1 }
 }
 
 send "exit\r"
+# Handle potentially nested shells (exit from root, then exit from user)
 expect {
-    "unira5@" { }
-    "$ " { }
+    "$ " { send "exit\r" }
+    "unira5@" { send "exit\r" }
+    eof { }
 }
-send "exit\r"
 expect eof
