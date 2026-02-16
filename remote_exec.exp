@@ -1,0 +1,55 @@
+#!/usr/bin/expect -f
+
+set timeout 20
+if {[info exists env(SSH_PASSWORD)]} {
+    set password $env(SSH_PASSWORD)
+} else {
+    puts "Error: SSH_PASSWORD environment variable not set."
+    exit 1
+}
+
+set command [lindex $argv 0]
+
+spawn ssh -o StrictHostKeyChecking=no unira5@36.88.105.236
+expect {
+    "password:" { send "$password\r" }
+    timeout { puts "SSH connection timed out"; exit 1 }
+}
+
+# Wait for shell prompt
+expect {
+    "unira5@" { send "su -\r" }
+    "$ " { send "su -\r" }
+    timeout { puts "User prompt not found"; exit 1 }
+}
+
+# Wait for su password prompt
+expect {
+    "Password:" { send "$password\r" }
+    timeout { puts "Root password prompt not found"; exit 1 }
+}
+
+# Wait for root prompt
+expect {
+    "root@" { }
+    "# " { }
+    timeout { puts "Root prompt not found"; exit 1 }
+}
+
+# Run the command
+send "$command\r"
+
+# Wait for root prompt again to indicate command finished
+expect {
+    "root@" { }
+    "# " { }
+    timeout { puts "Command execution timed out"; exit 1 }
+}
+
+send "exit\r"
+expect {
+    "unira5@" { }
+    "$ " { }
+}
+send "exit\r"
+expect eof
